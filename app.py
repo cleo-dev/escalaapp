@@ -317,11 +317,11 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
     return doc
 
 # --- INTERFACE ---
-st.title("📏 Gerador de Escala (V16 - Fix XML)")
+st.title("📏 Gerador de Escala ( HEOC)")
 uploaded_files = st.file_uploader("Arraste os PDFs aqui", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
-    if st.button("🚀 Processar"):
+    if st.button(">>Processar<<"):
         dfs = {'ENFERMEIROS': pd.DataFrame(), 'TÉCNICOS': pd.DataFrame()}
         meta_ano, meta_mes = 2026, 1
         
