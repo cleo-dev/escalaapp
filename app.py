@@ -13,7 +13,7 @@ from docx.oxml.ns import nsdecls
 from docx.oxml import parse_xml
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Gerador de Escala (Final V11)", page_icon="🏥", layout="centered")
+st.set_page_config(page_title="Gerador de Escala (V12 - Print Ready)", page_icon="🖨️", layout="centered")
 
 # --- CORES ---
 COR_AZUL_CLARO = "CFE2F3"
@@ -27,8 +27,10 @@ def formatar_nome(nome_completo):
     partes = nome_completo.split()
     ignorar = ["ENF", "ENFERMEIRO", "CONTRATO", "EFETIVO", "TEC", "TECNICO", "MÉDIO", "MEDIO", "VÍNCULO", "FUNÇÃO", "COREN", "COREN-AP"]
     partes = [p for p in partes if p.upper() not in ignorar and len(p) > 2]
-    if len(partes) > 1: return f"{partes[0]} {partes[-1]}".title()
-    elif len(partes) == 1: return partes[0].title()
+    
+    # Retorna em MAIÚSCULO conforme pedido
+    if len(partes) > 1: return f"{partes[0]} {partes[-1]}".upper()
+    elif len(partes) == 1: return partes[0].upper()
     return ""
 
 def limpar_valor(val):
@@ -79,7 +81,6 @@ def processar_pdf(file_obj, nome_arquivo):
                             if vl.isdigit():
                                 dia_num = int(vl)
                                 if 1 <= dia_num <= 31:
-                                    # Trava de virada de mês
                                     if dia_num < ultimo_dia_visto and ultimo_dia_visto > 20: continue
                                     mapa_dias[c] = dia_num
                                     ultimo_dia_visto = dia_num
@@ -124,8 +125,14 @@ def formatar_texto(run, tamanho=10, negrito=False):
     font.bold = negrito
     font.name = 'Arial'
 
-def set_col_widths(table):
-    widths = [Cm(2.0), Cm(0.8), Cm(6.5), Cm(3.5), Cm(3.5)]
+def set_col_widths_enf(table):
+    # LARGURAS EXATAS PEDIDAS
+    # Col 0: Label (Lateral) - Ajustamos para caber no A4 (~2.2cm)
+    # Col 1: Turno - 1.8cm
+    # Col 2: Nome - 4.0cm
+    # Col 3: Função - 1.5cm
+    # Col 4: Trocas - Restante (~6.5cm num A4 padrão)
+    widths = [Cm(2.2), Cm(1.8), Cm(4.0), Cm(1.5), Cm(6.5)]
     for row in table.rows:
         for idx, width in enumerate(widths):
             if idx < len(row.cells): row.cells[idx].width = width
@@ -133,12 +140,12 @@ def set_col_widths(table):
 def definir_funcoes_aleatorias(df_turno):
     if df_turno.empty: return []
     total = len(df_turno)
-    funcoes = ["Classificador"] * total
-    if total > 0: funcoes[random.randint(0, total - 1)] = "Volante"
+    # Usa abreviação pedida
+    funcoes = ["Clas."] * total
+    if total > 0: funcoes[random.randint(0, total - 1)] = "Vol."
     return funcoes
 
 def adicionar_bloco_turno_enf(table, df_filtrado, nome_turno, cor_lateral):
-    # Usa len(rows) para pegar o índice real, evitando erro manual
     start_row_idx = len(table.rows)
     qtd = max(1, len(df_filtrado))
     funcoes = definir_funcoes_aleatorias(df_filtrado)
@@ -155,22 +162,28 @@ def adicionar_bloco_turno_enf(table, df_filtrado, nome_turno, cor_lateral):
     definir_cor_fundo(merged, cor_lateral)
     
     if df_filtrado.empty:
-        for i in range(1, 5): table.rows[start_row_idx].cells[i].text = "-"
+        for i in range(1, 5): 
+            if i < len(table.rows[start_row_idx].cells):
+                table.rows[start_row_idx].cells[i].text = "-"
     else:
         for i, (_, row) in enumerate(df_filtrado.iterrows()):
             r = table.rows[start_row_idx + i]
+            
             # Turno
             r.cells[1].text = row['TURNO']
             r.cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             formatar_texto(r.cells[1].paragraphs[0].runs[0], negrito=True, tamanho=9)
+            
             # Nome
-            r.cells[2].text = row['NOME']
-            formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=9)
-            # Função
+            r.cells[2].text = row['NOME'] # Já vem em MAIUSCULO do formatar_nome
+            formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=8) # Fonte um pouco menor p/ caber
+            
+            # Função (Abreviada)
             r.cells[3].text = funcoes[i]
             r.cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             formatar_texto(r.cells[3].paragraphs[0].runs[0], tamanho=8)
-            # Trocas
+
+            # Trocas (Vazio)
             r.cells[4].text = ""
 
 def adicionar_bloco_turno_tec(table, df_filtrado, nome_turno, cor_lateral):
@@ -189,15 +202,12 @@ def adicionar_bloco_turno_tec(table, df_filtrado, nome_turno, cor_lateral):
     definir_cor_fundo(merged, cor_lateral)
     
     if df_filtrado.empty:
-        # Verifica se cells existem antes de acessar
         if len(table.rows[start_row_idx].cells) > 2:
             table.rows[start_row_idx].cells[1].text = "-"
             table.rows[start_row_idx].cells[2].text = "-"
     else:
         for i, (_, row) in enumerate(df_filtrado.iterrows()):
             r = table.rows[start_row_idx + i]
-            
-            # Verifica integridade da linha
             if len(r.cells) < 3: continue 
             
             # Turno
@@ -207,39 +217,49 @@ def adicionar_bloco_turno_tec(table, df_filtrado, nome_turno, cor_lateral):
             
             # Nome
             r.cells[2].text = row['NOME']
-            formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=9)
+            formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=8)
             
-            # Trocas - Só mescla se tiver células suficientes (evita o erro)
+            # Trocas (Mescla Col 3 e 4 se disponivel)
             if len(r.cells) >= 5:
                 c_troca = r.cells[3].merge(r.cells[4])
                 c_troca.text = ""
             elif len(r.cells) == 4:
-                # Se já veio mesclada (herança da linha anterior), só limpa o texto
                 r.cells[3].text = ""
 
 def gerar_docx_completo(df_enf, df_tec, ano, mes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     
+    # Margens estreitas para caber tudo
     for section in doc.sections:
-        section.top_margin = Cm(1.5); section.bottom_margin = Cm(1.5)
-        section.left_margin = Cm(1.5); section.right_margin = Cm(1.5)
+        section.top_margin = Cm(1.0); section.bottom_margin = Cm(1.0)
+        section.left_margin = Cm(1.2); section.right_margin = Cm(1.2)
 
     df_enf['DIA'] = pd.to_numeric(df_enf['DIA'], errors='coerce')
     df_tec['DIA'] = pd.to_numeric(df_tec['DIA'], errors='coerce')
     dias_totais = sorted(list(set(df_enf['DIA'].dropna().unique()) | set(df_tec['DIA'].dropna().unique())))
     dias_semana = {0: 'SEG', 1: 'TER', 2: 'QUA', 3: 'QUI', 4: 'SEX', 5: 'SÁB', 6: 'DOM'}
 
+    # CONTADOR DE DIAS PARA QUEBRA DE PÁGINA
+    contador_dias = 0
+
     for dia in dias_totais:
+        # Lógica de Quebra: A cada 2 dias (exceto no primeiro), cria nova página
+        if contador_dias > 0 and contador_dias % 2 == 0:
+            doc.add_page_break()
+        
+        contador_dias += 1
+
         try:
             dt = datetime.date(ano, mes, int(dia))
             txt_data = f"{dt.strftime('%d/%m/%Y')} {dias_semana[dt.weekday()]}"
         except: continue
         
+        # Tabela Enfermeiros (5 colunas)
         table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
         table.autofit = False 
-        set_col_widths(table)
+        set_col_widths_enf(table)
         
         # Data Header
         r = table.rows[0]
@@ -257,9 +277,10 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
         
-        # Cabeçalho Colunas Enfermeiro
+        # Cabeçalho Colunas
         r_head = table.add_row()
-        col_names = ["", "Turno", "Nome", "Função", "Trocas"]
+        # Ajuste nomes para caber
+        col_names = ["", "Turno", "Nome", "Func.", "Trocas"]
         for idx, nome in enumerate(col_names):
             r_head.cells[idx].text = nome
             r_head.cells[idx].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -273,6 +294,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         adicionar_bloco_turno_enf(table, not_enf, "NOTURNO", COR_ROSA_ESCURO)
 
         # === TÉCNICOS ===
+        # Mesma tabela, adiciona linha de titulo
         r = table.add_row()
         c = r.cells[0].merge(r.cells[4])
         c.text = "TÉCNICOS"
@@ -280,13 +302,13 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
         
-        # Cabeçalho Colunas Técnicos
+        # Cabeçalho Técnicos (Mescla coluna 3 e 4 para trocas)
         r_head = table.add_row()
         col_names_tec = ["", "Turno", "Nome", "Trocas", ""]
         for idx, nome in enumerate(col_names_tec):
             if idx == 4: continue
             cell = r_head.cells[idx]
-            if idx == 3: cell = cell.merge(r_head.cells[4]) # Merge no header
+            if idx == 3: cell = cell.merge(r_head.cells[4])
             cell.text = nome
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
             if idx > 0: formatar_texto(cell.paragraphs[0].runs[0], tamanho=8, negrito=True)
@@ -298,16 +320,24 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         adicionar_bloco_turno_tec(table, diu_tec, "DIURNO", COR_AZUL_CLARO)
         adicionar_bloco_turno_tec(table, not_tec, "NOTURNO", COR_ROSA_ESCURO)
         
+        # Espaço visual entre dias (paragrafo pequeno)
         doc.add_paragraph("")
 
     return doc
 
 # --- INTERFACE ---
-st.title("🏥 Gerador de Escala")
+st.title("Gerador de Escala HEOC ")
+st.markdown("""
+- **Layout:** 2 dias por página.
+- **Nomes:** MAIÚSCULOS.
+- **Larguras:** Turno (1.8cm), Nome (4cm), Func (1.5cm).
+- **Funções:** Clas. / Vol.
+""")
+
 uploaded_files = st.file_uploader("Arraste os PDFs aqui", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
-    if st.button(">> Processar"):
+    if st.button("🚀 Processar"):
         dfs = {'ENFERMEIROS': pd.DataFrame(), 'TÉCNICOS': pd.DataFrame()}
         meta_ano, meta_mes = 2026, 1
         
@@ -322,6 +352,6 @@ if uploaded_files:
             doc = gerar_docx_completo(dfs['ENFERMEIROS'], dfs['TÉCNICOS'], meta_ano, meta_mes)
             bio = io.BytesIO()
             doc.save(bio)
-            st.download_button("📥 Baixar DOCX", data=bio.getvalue(), file_name=f"Escala_{meta_mes}_{meta_ano}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            st.download_button("📥 Baixar DOCX Formatado", data=bio.getvalue(), file_name=f"Escala_Oficial_{meta_mes}_{meta_ano}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         else:
             st.error("Nenhum dado encontrado nos arquivos.")
