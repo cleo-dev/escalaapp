@@ -9,11 +9,11 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
-from docx.oxml.ns import nsdecls
-from docx.oxml import parse_xml, OxmlElement # Importação nova necessária
+from docx.oxml.ns import nsdecls, qn # Adicionado qn
+from docx.oxml import parse_xml, OxmlElement
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Gerador de Escala (LibreOffice Ready)", page_icon="📏", layout="centered")
+st.set_page_config(page_title="Gerador de Escala (V15 - Final)", page_icon="📏", layout="centered")
 
 # --- CORES ---
 COR_AZUL_CLARO = "CFE2F3"
@@ -27,7 +27,7 @@ LARGURA_NOME = Cm(4.0)
 LARGURA_FUNC = Cm(1.5)
 LARGURA_TROCAS = Cm(9.5) 
 
-# --- FUNÇÕES DE EXTRAÇÃO (SEM MUDANÇAS) ---
+# --- FUNÇÕES DE EXTRAÇÃO ---
 
 def formatar_nome(nome_completo):
     if not isinstance(nome_completo, str): return ""
@@ -124,12 +124,11 @@ def formatar_texto(run, tamanho=10, negrito=False):
 
 def tornar_tabela_fixa(table):
     """
-    Injeta XML para forçar o LibreOffice a respeitar larguras fixas.
-    Isso impede o 'Autofit' do LibreOffice.
+    CORREÇÃO DO ERRO: Usa qn() para definir o atributo w:type corretamente.
     """
     tblPr = table._tbl.tblPr
     layout = OxmlElement('w:tblLayout')
-    layout.set(nsdecls('w'), 'type', 'fixed')
+    layout.set(qn('w:type'), 'fixed') # CORRIGIDO AQUI
     tblPr.append(layout)
 
 def forcar_larguras(row):
@@ -228,7 +227,6 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     
-    # Margens
     for section in doc.sections:
         section.top_margin = Cm(1.0); section.bottom_margin = Cm(1.0)
         section.left_margin = Cm(1.0); section.right_margin = Cm(1.0)
@@ -249,17 +247,12 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
             txt_data = f"{dt.strftime('%d/%m/%Y')} {dias_semana[dt.weekday()]}"
         except: continue
         
-        # Tabela Principal
         table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
         
-        # --- O SEGREDO DO LIBREOFFICE ---
         tornar_tabela_fixa(table) 
-        # -------------------------------
-
         forcar_larguras(table.rows[0])
         
-        # Header Data
         r = table.rows[0]
         c = r.cells[0].merge(r.cells[4])
         c.text = txt_data
@@ -267,7 +260,6 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=11, negrito=True)
         
-        # Header Enfermeiros
         r = table.add_row()
         forcar_larguras(r)
         c = r.cells[0].merge(r.cells[4])
@@ -276,7 +268,6 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
         
-        # Colunas Enfermeiros
         r_head = table.add_row()
         forcar_larguras(r_head)
         col_names = ["", "Turno", "Nome", "Func.", "Trocas"]
@@ -292,7 +283,6 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         adicionar_bloco_turno_enf(table, diu_enf, "DIURNO", COR_AZUL_CLARO)
         adicionar_bloco_turno_enf(table, not_enf, "NOTURNO", COR_ROSA_ESCURO)
 
-        # Header Técnicos
         r = table.add_row()
         forcar_larguras(r)
         c = r.cells[0].merge(r.cells[4])
@@ -301,7 +291,6 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
         
-        # Colunas Técnicos
         r_head = table.add_row()
         forcar_larguras(r_head)
         col_names_tec = ["", "Turno", "Nome", "Trocas", ""]
@@ -327,7 +316,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
     return doc
 
 # --- INTERFACE ---
-st.title("📏 Gerador de Escala (Compatível LibreOffice)")
+st.title("📏 Gerador de Escala (V15 - Final)")
 uploaded_files = st.file_uploader("Arraste os PDFs aqui", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
