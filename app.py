@@ -10,10 +10,10 @@ from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml.ns import nsdecls
-from docx.oxml import parse_xml
+from docx.oxml import parse_xml, OxmlElement # Importação nova necessária
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Gerador de Escala (V13 - Largura Fixa)", page_icon="📏", layout="centered")
+st.set_page_config(page_title="Gerador de Escala (LibreOffice Ready)", page_icon="📏", layout="centered")
 
 # --- CORES ---
 COR_AZUL_CLARO = "CFE2F3"
@@ -21,21 +21,19 @@ COR_ROSA_CLARO = "F4CCCC"
 COR_ROSA_ESCURO = "EA9999"
 
 # --- DEFINIÇÃO DE LARGURAS (Cm) ---
-# Total A4 (21cm) - Margens (2cm) = ~19cm uteis
 LARGURA_LATERAL = Cm(2.2)
 LARGURA_TURNO = Cm(1.8)
 LARGURA_NOME = Cm(4.0)
 LARGURA_FUNC = Cm(1.5)
-LARGURA_TROCAS = Cm(9.5) # O resto
+LARGURA_TROCAS = Cm(9.5) 
 
-# --- FUNÇÕES DE EXTRAÇÃO ---
+# --- FUNÇÕES DE EXTRAÇÃO (SEM MUDANÇAS) ---
 
 def formatar_nome(nome_completo):
     if not isinstance(nome_completo, str): return ""
     partes = nome_completo.split()
     ignorar = ["ENF", "ENFERMEIRO", "CONTRATO", "EFETIVO", "TEC", "TECNICO", "MÉDIO", "MEDIO", "VÍNCULO", "FUNÇÃO", "COREN", "COREN-AP"]
     partes = [p for p in partes if p.upper() not in ignorar and len(p) > 2]
-    
     if len(partes) > 1: return f"{partes[0]} {partes[-1]}".upper()
     elif len(partes) == 1: return partes[0].upper()
     return ""
@@ -70,14 +68,12 @@ def processar_pdf(file_obj, nome_arquivo):
     dados = []
     with pdfplumber.open(file_obj) as pdf:
         tipo, ano, mes = detectar_metadados(pdf, nome_arquivo)
-        
         for page in pdf.pages:
             tabelas = page.extract_tables()
             for tabela in tabelas:
                 df = pd.DataFrame(tabela)
                 idx_cabecalho = -1
                 mapa_dias = {}
-                
                 for idx, row in df.iterrows():
                     numeros_validos = [int(limpar_valor(val)) for val in row if limpar_valor(val).isdigit() and 1 <= int(limpar_valor(val)) <= 31]
                     if len(numeros_validos) >= 5:
@@ -92,19 +88,15 @@ def processar_pdf(file_obj, nome_arquivo):
                                     mapa_dias[c] = dia_num
                                     ultimo_dia_visto = dia_num
                         break
-                
                 if idx_cabecalho == -1: continue
-                
                 df_dados = df.iloc[idx_cabecalho+1:].copy()
                 col_nome = 1
                 for i, col in enumerate(df.columns):
                     if "NOME" in str(col).upper(): col_nome = i; break
-                
                 for _, row in df_dados.iterrows():
                     if col_nome >= len(row): continue
                     nome = formatar_nome(limpar_valor(row.iloc[col_nome]))
                     if len(nome) < 3 or "TURNO" in nome.upper(): continue
-                    
                     for c_idx, dia in mapa_dias.items():
                         if c_idx < len(row):
                             turno = limpar_valor(row.iloc[c_idx]).upper()
@@ -113,14 +105,12 @@ def processar_pdf(file_obj, nome_arquivo):
                             if len(turno) < 7:
                                 for v in validos:
                                     if v in turno: eh_valido = True; break
-                            
                             if eh_valido:
                                 dados.append({"DIA": dia, "TURNO": turno, "NOME": nome})
-                                
     if not dados: return pd.DataFrame(columns=['DIA', 'TURNO', 'NOME']), tipo, ano, mes
     return pd.DataFrame(dados), tipo, ano, mes
 
-# --- FUNÇÕES WORD ---
+# --- FUNÇÕES WORD & LAYOUT ---
 
 def definir_cor_fundo(celula, cor_hex):
     shading_elm = parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex))
@@ -132,16 +122,19 @@ def formatar_texto(run, tamanho=10, negrito=False):
     font.bold = negrito
     font.name = 'Arial'
 
-def forcar_larguras(row, eh_tecnico=False):
-    """Aplica a largura célula por célula na linha"""
-    # Larguras na ordem: [Lateral, Turno, Nome, Func, Trocas]
+def tornar_tabela_fixa(table):
+    """
+    Injeta XML para forçar o LibreOffice a respeitar larguras fixas.
+    Isso impede o 'Autofit' do LibreOffice.
+    """
+    tblPr = table._tbl.tblPr
+    layout = OxmlElement('w:tblLayout')
+    layout.set(nsdecls('w'), 'type', 'fixed')
+    tblPr.append(layout)
+
+def forcar_larguras(row):
+    """Aplica largura exata para cada célula da linha"""
     larguras = [LARGURA_LATERAL, LARGURA_TURNO, LARGURA_NOME, LARGURA_FUNC, LARGURA_TROCAS]
-    
-    if eh_tecnico:
-        # Técnicos tem 1 coluna a menos visualmente (Func e Trocas mescladas ou apenas Trocas)
-        # Se a linha tiver 4 celulas (já mesclada) ou 5 celulas
-        pass 
-        
     for idx, cell in enumerate(row.cells):
         if idx < len(larguras):
             cell.width = larguras[idx]
@@ -160,7 +153,7 @@ def adicionar_bloco_turno_enf(table, df_filtrado, nome_turno, cor_lateral):
     
     for _ in range(qtd): 
         row = table.add_row()
-        forcar_larguras(row) # APLICA LARGURA AQUI
+        forcar_larguras(row) 
         
     c1 = table.rows[start_row_idx].cells[0]
     c2 = table.rows[start_row_idx + qtd - 1].cells[0]
@@ -198,7 +191,7 @@ def adicionar_bloco_turno_tec(table, df_filtrado, nome_turno, cor_lateral):
     
     for _ in range(qtd): 
         row = table.add_row()
-        forcar_larguras(row) # APLICA LARGURA AQUI
+        forcar_larguras(row)
         
     c1 = table.rows[start_row_idx].cells[0]
     c2 = table.rows[start_row_idx + qtd - 1].cells[0]
@@ -225,18 +218,17 @@ def adicionar_bloco_turno_tec(table, df_filtrado, nome_turno, cor_lateral):
             r.cells[2].text = row['NOME']
             formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=8)
             
-            # Mescla para Trocas (Col 3 + 4)
             if len(r.cells) >= 5:
                 c_troca = r.cells[3].merge(r.cells[4])
                 c_troca.text = ""
-                # Ajusta largura da célula mesclada para ser a soma das duas originais
+                # Ajusta largura da célula mesclada
                 c_troca.width = LARGURA_FUNC + LARGURA_TROCAS
 
 def gerar_docx_completo(df_enf, df_tec, ano, mes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
     
-    # Margens estreitas (1cm)
+    # Margens
     for section in doc.sections:
         section.top_margin = Cm(1.0); section.bottom_margin = Cm(1.0)
         section.left_margin = Cm(1.0); section.right_margin = Cm(1.0)
@@ -260,13 +252,14 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         # Tabela Principal
         table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
-        table.autofit = False 
-        table.allow_autofit = False
         
-        # Aplica largura no Header Data
+        # --- O SEGREDO DO LIBREOFFICE ---
+        tornar_tabela_fixa(table) 
+        # -------------------------------
+
         forcar_larguras(table.rows[0])
         
-        # Data Header
+        # Header Data
         r = table.rows[0]
         c = r.cells[0].merge(r.cells[4])
         c.text = txt_data
@@ -274,7 +267,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=11, negrito=True)
         
-        # === ENFERMEIROS ===
+        # Header Enfermeiros
         r = table.add_row()
         forcar_larguras(r)
         c = r.cells[0].merge(r.cells[4])
@@ -283,7 +276,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
         
-        # Sub-header Colunas
+        # Colunas Enfermeiros
         r_head = table.add_row()
         forcar_larguras(r_head)
         col_names = ["", "Turno", "Nome", "Func.", "Trocas"]
@@ -299,7 +292,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         adicionar_bloco_turno_enf(table, diu_enf, "DIURNO", COR_AZUL_CLARO)
         adicionar_bloco_turno_enf(table, not_enf, "NOTURNO", COR_ROSA_ESCURO)
 
-        # === TÉCNICOS ===
+        # Header Técnicos
         r = table.add_row()
         forcar_larguras(r)
         c = r.cells[0].merge(r.cells[4])
@@ -308,7 +301,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
         
-        # Sub-header Técnicos
+        # Colunas Técnicos
         r_head = table.add_row()
         forcar_larguras(r_head)
         col_names_tec = ["", "Turno", "Nome", "Trocas", ""]
@@ -334,7 +327,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
     return doc
 
 # --- INTERFACE ---
-st.title("📏 Gerador de Escala HEOC")
+st.title("📏 Gerador de Escala (Compatível LibreOffice)")
 uploaded_files = st.file_uploader("Arraste os PDFs aqui", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -353,6 +346,6 @@ if uploaded_files:
             doc = gerar_docx_completo(dfs['ENFERMEIROS'], dfs['TÉCNICOS'], meta_ano, meta_mes)
             bio = io.BytesIO()
             doc.save(bio)
-            st.download_button("📥 Baixar DOCX", data=bio.getvalue(), file_name=f"Escala_Final_{meta_mes}_{meta_ano}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            st.download_button("📥 Baixar DOCX", data=bio.getvalue(), file_name=f"Escala_Oficial_{meta_mes}_{meta_ano}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         else:
             st.error("Nenhum dado encontrado.")
