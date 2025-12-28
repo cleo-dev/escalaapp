@@ -9,11 +9,11 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
-from docx.oxml.ns import nsdecls, qn # Adicionado qn
+from docx.oxml.ns import nsdecls, qn
 from docx.oxml import parse_xml, OxmlElement
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Gerador de Escala (V15 - Final)", page_icon="📏", layout="centered")
+st.set_page_config(page_title="Gerador de Escala (V16 - Fix XML)", page_icon="🛠️", layout="centered")
 
 # --- CORES ---
 COR_AZUL_CLARO = "CFE2F3"
@@ -124,11 +124,12 @@ def formatar_texto(run, tamanho=10, negrito=False):
 
 def tornar_tabela_fixa(table):
     """
-    CORREÇÃO DO ERRO: Usa qn() para definir o atributo w:type corretamente.
+    CORREÇÃO DO ERRO (V16): Usa apenas 2 argumentos no set()
     """
     tblPr = table._tbl.tblPr
     layout = OxmlElement('w:tblLayout')
-    layout.set(qn('w:type'), 'fixed') # CORRIGIDO AQUI
+    # O erro ocorria aqui. Agora usamos qn() para passar a chave correta.
+    layout.set(qn('w:type'), 'fixed') 
     tblPr.append(layout)
 
 def forcar_larguras(row):
@@ -316,7 +317,7 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
     return doc
 
 # --- INTERFACE ---
-st.title("📏 Gerador de Escala (V15 - Final)")
+st.title("📏 Gerador de Escala (V16 - Fix XML)")
 uploaded_files = st.file_uploader("Arraste os PDFs aqui", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
