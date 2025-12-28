@@ -4,41 +4,28 @@ import pandas as pd
 import datetime
 import io
 import re
+import random
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, Cm, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml.ns import nsdecls
 from docx.oxml import parse_xml
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="Gerador de Escala Unificada",
-    page_icon="🏥",
-    layout="centered"
-)
+st.set_page_config(page_title="Gerador de Escala (Final)", page_icon="🏥", layout="centered")
 
 # --- CORES E CONSTANTES ---
 COR_AZUL_CLARO = "CFE2F3"
 COR_ROSA_CLARO = "F4CCCC"
 COR_ROSA_ESCURO = "EA9999"
 
-# --- FUNÇÕES AUXILIARES (LÓGICA DO SCRIPT) ---
-
-def definir_cor_fundo(celula, cor_hex):
-    shading_elm = parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex))
-    celula._tc.get_or_add_tcPr().append(shading_elm)
-
-def formatar_texto(run, tamanho=10, negrito=False):
-    font = run.font
-    font.size = Pt(tamanho)
-    font.bold = negrito
-    font.name = 'Arial'
+# --- FUNÇÕES DE LÓGICA DE EXTRAÇÃO ---
 
 def formatar_nome(nome_completo):
     if not isinstance(nome_completo, str): return ""
     partes = nome_completo.split()
-    ignorar = ["ENF", "ENFERMEIRO", "CONTRATO", "EFETIVO", "TEC", "TECNICO", "MÉDIO", "MEDIO", "VÍNCULO", "FUNÇÃO", "COREN"]
+    ignorar = ["ENF", "ENFERMEIRO", "CONTRATO", "EFETIVO", "TEC", "TECNICO", "MÉDIO", "MEDIO", "VÍNCULO", "FUNÇÃO", "COREN", "COREN-AP"]
     partes = [p for p in partes if p.upper() not in ignorar and len(p) > 2]
     if len(partes) > 1: return f"{partes[0]} {partes[-1]}".title()
     elif len(partes) == 1: return partes[0].title()
@@ -48,44 +35,30 @@ def limpar_valor(val):
     return str(val).strip() if val is not None else ""
 
 def detectar_metadados(pdf, nome_arquivo):
-    # 1. Tenta definir TIPO pelo NOME DO ARQUIVO
     nome_upper = nome_arquivo.upper()
-    tipo = "ENFERMEIROS" 
+    tipo = "ENFERMEIROS"
+    if "TEC" in nome_upper or "TÉC" in nome_upper: tipo = "TÉCNICOS"
+    elif "ENF" in nome_upper: tipo = "ENFERMEIROS"
     
-    if "TEC" in nome_upper or "TÉC" in nome_upper:
-        tipo = "TÉCNICOS"
-    elif "ENF" in nome_upper:
-        tipo = "ENFERMEIROS"
-    else:
-        try:
-            p0 = pdf.pages[0]
-            texto_header = p0.crop((0, 0, p0.width, p0.height * 0.3)).extract_text() or ""
-            if "TECNICO" in texto_header.upper() or "TÉCNICO" in texto_header.upper():
-                tipo = "TÉCNICOS"
-        except: pass
-
-    # 2. Tenta definir DATA
     texto_completo = ""
-    try:
-        texto_completo = pdf.pages[0].extract_text().upper()
+    try: texto_completo = pdf.pages[0].extract_text().upper()
     except: pass
     
-    meses = {r'\bJANEIRO\b':1, r'\bFEVEREIRO\b':2, r'\bMARÇO\b':3, r'\bMARCO\b':3, r'\bABRIL\b':4, r'\bMAIO\b':5, r'\bJUNHO\b':6, r'\bJULHO\b':7, r'\bAGOSTO\b':8, r'\bSETEMBRO\b':9, r'\bOUTUBRO\b':10, r'\bNOVEMBRO\b':11, r'\bDEZEMBRO\b':12}
-    mes_detectado = 1
+    meses = {r'JANEIRO':1, r'FEVEREIRO':2, r'MARÇO':3, r'MARCO':3, r'ABRIL':4, r'MAIO':5, r'JUNHO':6, r'JULHO':7, r'AGOSTO':8, r'SETEMBRO':9, r'OUTUBRO':10, r'NOVEMBRO':11, r'DEZEMBRO':12}
+    mes_detectado = 1 # Default
     for r_mes, n_mes in meses.items():
-        if re.search(r_mes, texto_completo):
+        if r_mes in texto_completo:
             mes_detectado = n_mes
             break
             
     ano_detectado = 2026
-    match_ano = re.search(r'\b(202[3-9]|2030)\b', texto_completo)
+    match_ano = re.search(r'202[4-9]', texto_completo)
     if match_ano: ano_detectado = int(match_ano.group(0))
 
     return tipo, ano_detectado, mes_detectado
 
 def processar_pdf(file_obj, nome_arquivo):
     dados = []
-    # Streamlit file_obj funciona como um arquivo aberto, pdfplumber aceita nativamente
     with pdfplumber.open(file_obj) as pdf:
         tipo, ano, mes = detectar_metadados(pdf, nome_arquivo)
         
@@ -96,13 +69,28 @@ def processar_pdf(file_obj, nome_arquivo):
                 
                 idx_cabecalho = -1
                 mapa_dias = {}
+                
                 for idx, row in df.iterrows():
-                    numeros = sum(1 for x in row if limpar_valor(x).isdigit() and 1 <= int(limpar_valor(x)) <= 31)
-                    if numeros >= 5:
+                    numeros_validos = []
+                    for c, val in enumerate(row):
+                        v_str = limpar_valor(val)
+                        if v_str.isdigit() and 1 <= int(v_str) <= 31:
+                            numeros_validos.append(int(v_str))
+                    
+                    if len(numeros_validos) >= 5:
                         idx_cabecalho = idx
+                        
+                        # Trava de Virada de Mês
+                        ultimo_dia_visto = 0
                         for c, v in enumerate(row):
                             vl = limpar_valor(v)
-                            if vl.isdigit() and 1 <= int(vl) <= 31: mapa_dias[c] = int(vl)
+                            if vl.isdigit():
+                                dia_num = int(vl)
+                                if 1 <= dia_num <= 31:
+                                    if dia_num < ultimo_dia_visto and ultimo_dia_visto > 20:
+                                        continue 
+                                    mapa_dias[c] = dia_num
+                                    ultimo_dia_visto = dia_num
                         break
                 
                 if idx_cabecalho == -1: continue
@@ -122,9 +110,11 @@ def processar_pdf(file_obj, nome_arquivo):
                             turno = limpar_valor(row.iloc[c_idx]).upper()
                             validos = ["M", "T", "N", "N1", "N2", "D", "SD", "SN", "LP", "MT", "TM", "MD"]
                             eh_valido = False
-                            if len(turno) < 6:
+                            if len(turno) < 7:
                                 for v in validos:
-                                    if v in turno: eh_valido = True; break
+                                    if v in turno: 
+                                        eh_valido = True
+                                        break
                             
                             if eh_valido:
                                 dados.append({"DIA": dia, "TURNO": turno, "NOME": nome})
@@ -133,7 +123,84 @@ def processar_pdf(file_obj, nome_arquivo):
         return pd.DataFrame(columns=['DIA', 'TURNO', 'NOME']), tipo, ano, mes
     return pd.DataFrame(dados), tipo, ano, mes
 
-def adicionar_bloco_turno(table, df_filtrado, nome_turno, cor_lateral, start_row_idx):
+# --- FUNÇÕES DE WORD / LAYOUT ---
+
+def definir_cor_fundo(celula, cor_hex):
+    shading_elm = parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex))
+    celula._tc.get_or_add_tcPr().append(shading_elm)
+
+def formatar_texto(run, tamanho=10, negrito=False, alinhamento=None):
+    font = run.font
+    font.size = Pt(tamanho)
+    font.bold = negrito
+    font.name = 'Arial'
+
+def set_col_widths(table):
+    # Larguras Aproximadas (Total A4 ~16-17cm úteis)
+    widths = [Cm(2.0), Cm(0.8), Cm(6.5), Cm(3.5), Cm(3.5)]
+    for row in table.rows:
+        for idx, width in enumerate(widths):
+            if idx < len(row.cells):
+                row.cells[idx].width = width
+
+def definir_funcoes_aleatorias(df_turno):
+    """Retorna uma lista de funções (Volante/Classificador) alinhada ao dataframe"""
+    if df_turno.empty: return []
+    
+    total = len(df_turno)
+    funcoes = ["Classificador"] * total
+    
+    # Escolhe um aleatório para ser Volante
+    if total > 0:
+        idx_volante = random.randint(0, total - 1)
+        funcoes[idx_volante] = "Volante"
+        
+    return funcoes
+
+def adicionar_bloco_turno_enf(table, df_filtrado, nome_turno, cor_lateral, start_row_idx):
+    qtd = max(1, len(df_filtrado))
+    
+    # Gera funções se houver enfermeiros
+    funcoes = definir_funcoes_aleatorias(df_filtrado)
+    
+    for _ in range(qtd): table.add_row()
+        
+    # Mescla Lateral (Turno Label)
+    c1 = table.rows[start_row_idx].cells[0]
+    c2 = table.rows[start_row_idx + qtd - 1].cells[0]
+    merged = c1.merge(c2)
+    merged.text = nome_turno
+    merged.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    formatar_texto(merged.paragraphs[0].runs[0], negrito=True, tamanho=9)
+    definir_cor_fundo(merged, cor_lateral)
+    
+    if df_filtrado.empty:
+        for i in range(1, 5): table.rows[start_row_idx].cells[i].text = "-"
+    else:
+        for i, (_, row) in enumerate(df_filtrado.iterrows()):
+            r = table.rows[start_row_idx + i]
+            
+            # Turno
+            r.cells[1].text = row['TURNO']
+            r.cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            formatar_texto(r.cells[1].paragraphs[0].runs[0], negrito=True, tamanho=9)
+            
+            # Nome
+            r.cells[2].text = row['NOME']
+            formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=9)
+            
+            # Função
+            r.cells[3].text = funcoes[i]
+            r.cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            formatar_texto(r.cells[3].paragraphs[0].runs[0], tamanho=8)
+
+            # Trocas (Vazio)
+            r.cells[4].text = ""
+
+    return start_row_idx + qtd
+
+def adicionar_bloco_turno_tec(table, df_filtrado, nome_turno, cor_lateral, start_row_idx):
     qtd = max(1, len(df_filtrado))
     for _ in range(qtd): table.add_row()
         
@@ -143,7 +210,7 @@ def adicionar_bloco_turno(table, df_filtrado, nome_turno, cor_lateral, start_row
     merged.text = nome_turno
     merged.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
     merged.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    formatar_texto(merged.paragraphs[0].runs[0], negrito=True)
+    formatar_texto(merged.paragraphs[0].runs[0], negrito=True, tamanho=9)
     definir_cor_fundo(merged, cor_lateral)
     
     if df_filtrado.empty:
@@ -152,16 +219,33 @@ def adicionar_bloco_turno(table, df_filtrado, nome_turno, cor_lateral, start_row
     else:
         for i, (_, row) in enumerate(df_filtrado.iterrows()):
             r = table.rows[start_row_idx + i]
+            
+            # Turno
             r.cells[1].text = row['TURNO']
             r.cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-            formatar_texto(r.cells[1].paragraphs[0].runs[0], negrito=True)
+            formatar_texto(r.cells[1].paragraphs[0].runs[0], negrito=True, tamanho=9)
+            
+            # Nome
             r.cells[2].text = row['NOME']
+            formatar_texto(r.cells[2].paragraphs[0].runs[0], tamanho=9)
+            
+            # Trocas (Mescla Col 3 e 4 para ficar maior)
+            c_troca = r.cells[3].merge(r.cells[4])
+            c_troca.text = ""
+            
     return start_row_idx + qtd
 
 def gerar_docx_completo(df_enf, df_tec, ano, mes):
     doc = Document()
     doc.styles['Normal'].font.name = 'Arial'
-    doc.styles['Normal'].font.size = Pt(10)
+    
+    # Tenta ajustar margens para caber mais coisa
+    sections = doc.sections
+    for section in sections:
+        section.top_margin = Cm(1.5)
+        section.bottom_margin = Cm(1.5)
+        section.left_margin = Cm(1.5)
+        section.right_margin = Cm(1.5)
 
     df_enf['DIA'] = pd.to_numeric(df_enf['DIA'], errors='coerce')
     df_tec['DIA'] = pd.to_numeric(df_tec['DIA'], errors='coerce')
@@ -178,114 +262,106 @@ def gerar_docx_completo(df_enf, df_tec, ano, mes):
             txt_data = f"{dt.strftime('%d/%m/%Y')} {dias_semana[dt.weekday()]}"
         except: continue
         
-        table = doc.add_table(rows=1, cols=3)
+        # Cria tabela com 5 colunas
+        table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
+        table.autofit = False 
+        set_col_widths(table)
         
-        # Data
+        # Data Header
         r = table.rows[0]
-        c = r.cells[0].merge(r.cells[2])
+        c = r.cells[0].merge(r.cells[4])
         c.text = txt_data
         definir_cor_fundo(c, COR_AZUL_CLARO)
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        formatar_texto(c.paragraphs[0].runs[0], tamanho=12, negrito=True)
+        formatar_texto(c.paragraphs[0].runs[0], tamanho=11, negrito=True)
         
-        # --- ENFERMEIROS ---
+        # === ENFERMEIROS ===
         r = table.add_row()
-        c = r.cells[0].merge(r.cells[2])
+        c = r.cells[0].merge(r.cells[4])
         c.text = "ENFERMEIROS"
         definir_cor_fundo(c, COR_ROSA_CLARO)
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        formatar_texto(c.paragraphs[0].runs[0], tamanho=11, negrito=True)
+        formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
+        
+        # Cabeçalho Colunas Enfermeiro
+        r_head = table.add_row()
+        col_names = ["", "Turno", "Nome", "Função", "Trocas"]
+        for idx, nome in enumerate(col_names):
+            r_head.cells[idx].text = nome
+            r_head.cells[idx].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if idx > 0: formatar_texto(r_head.cells[idx].paragraphs[0].runs[0], tamanho=8, negrito=True)
         
         sub_enf = df_enf[df_enf['DIA'] == dia].sort_values('TURNO')
         not_enf = sub_enf[sub_enf['TURNO'].str.contains('N')]
         diu_enf = sub_enf[~sub_enf.index.isin(not_enf.index)]
         
-        idx = 2
-        idx = adicionar_bloco_turno(table, diu_enf, "DIURNO", COR_AZUL_CLARO, idx)
-        idx = adicionar_bloco_turno(table, not_enf, "NOTURNO", COR_ROSA_ESCURO, idx)
+        idx = 3
+        idx = adicionar_bloco_turno_enf(table, diu_enf, "DIURNO", COR_AZUL_CLARO, idx)
+        idx = adicionar_bloco_turno_enf(table, not_enf, "NOTURNO", COR_ROSA_ESCURO, idx)
 
-        # --- TÉCNICOS ---
+        # === TÉCNICOS ===
         r = table.add_row()
-        c = r.cells[0].merge(r.cells[2])
+        c = r.cells[0].merge(r.cells[4])
         c.text = "TÉCNICOS"
         definir_cor_fundo(c, COR_ROSA_CLARO)
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        formatar_texto(c.paragraphs[0].runs[0], tamanho=11, negrito=True)
-        idx += 1
+        formatar_texto(c.paragraphs[0].runs[0], tamanho=10, negrito=True)
+        
+        # Cabeçalho Colunas Técnicos
+        r_head = table.add_row()
+        col_names_tec = ["", "Turno", "Nome", "Trocas", ""]
+        for idx, nome in enumerate(col_names_tec):
+            if idx == 4: continue # Pula ultima
+            cell = r_head.cells[idx]
+            if idx == 3: cell = cell.merge(r_head.cells[4])
+            
+            cell.text = nome
+            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if idx > 0: formatar_texto(cell.paragraphs[0].runs[0], tamanho=8, negrito=True)
+            
+        idx += 2
         
         sub_tec = df_tec[df_tec['DIA'] == dia].sort_values('TURNO')
         not_tec = sub_tec[sub_tec['TURNO'].str.contains('N')]
         diu_tec = sub_tec[~sub_tec.index.isin(not_tec.index)]
         
-        idx = adicionar_bloco_turno(table, diu_tec, "DIURNO", COR_AZUL_CLARO, idx)
-        idx = adicionar_bloco_turno(table, not_tec, "NOTURNO", COR_ROSA_ESCURO, idx)
+        idx = adicionar_bloco_turno_tec(table, diu_tec, "DIURNO", COR_AZUL_CLARO, idx)
+        idx = adicionar_bloco_turno_tec(table, not_tec, "NOTURNO", COR_ROSA_ESCURO, idx)
         
         doc.add_paragraph("")
 
     return doc
 
-# --- INTERFACE DO STREAMLIT ---
-
-st.title("🏥 Gerador de Escala Unificada")
+# --- INTERFACE ---
+st.title("🏥 Gerador de Escala (Layout Ajustado)")
 st.markdown("""
-Este sistema converte as escalas de **Enfermeiros** e **Técnicos** (PDF) em um único documento Word formatado.
+- **Enfermeiros:** Define automaticamente 1 Volante (aleatório) e o resto Classificador. Coluna de Trocas inclusa.
+- **Técnicos:** Coluna de Trocas expandida.
 """)
 
-with st.expander("ℹ️ Instruções (Clique para ler)"):
-    st.write("""
-    1. Arraste os arquivos PDF da escala abaixo (Enfermeiros e Técnicos).
-    2. O sistema identificará automaticamente qual é qual.
-    3. Clique no botão **Baixar Documento Word** quando aparecer.
-    """)
-
-# Upload de arquivos (permite múltiplos)
-uploaded_files = st.file_uploader(
-    "Arraste os arquivos PDF aqui (Enfermeiro e Técnico)", 
-    type=["pdf"], 
-    accept_multiple_files=True
-)
+uploaded_files = st.file_uploader("Arraste os arquivos aqui", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
-    # Botão para processar
-    if st.button("🚀 Processar Escalas"):
+    if st.button("🚀 Processar"):
+        dfs = {'ENFERMEIROS': pd.DataFrame(), 'TÉCNICOS': pd.DataFrame()}
+        meta_ano, meta_mes = 2026, 1
         
-        with st.spinner('Lendo arquivos e processando dados...'):
-            dfs = {
-                'ENFERMEIROS': pd.DataFrame(columns=['DIA', 'TURNO', 'NOME']), 
-                'TÉCNICOS': pd.DataFrame(columns=['DIA', 'TURNO', 'NOME'])
-            }
-            meta_ano, meta_mes = 2026, 1
-            
-            sucesso = False
-            
-            for uploaded_file in uploaded_files:
-                # Processa cada arquivo
-                df, tipo, ano, mes = processar_pdf(uploaded_file, uploaded_file.name)
-                
-                if not df.empty:
-                    dfs[tipo] = df
-                    meta_ano, meta_mes = ano, mes
-                    st.success(f"✅ Arquivo identificado: **{uploaded_file.name}** como _{tipo}_ ({mes}/{ano})")
-                    sucesso = True
-                else:
-                    st.warning(f"⚠️ Não foi possível ler dados de: {uploaded_file.name}")
+        for f in uploaded_files:
+            df, tipo, ano, mes = processar_pdf(f, f.name)
+            if not df.empty:
+                dfs[tipo] = df
+                meta_ano, meta_mes = ano, mes
+                st.success(f"Lido: {tipo} ({mes}/{ano})")
 
-        if sucesso:
-            with st.spinner('Gerando documento Word...'):
-                doc_final = gerar_docx_completo(dfs['ENFERMEIROS'], dfs['TÉCNICOS'], meta_ano, meta_mes)
-                
-                # Salva em memória (buffer) para download
-                buffer = io.BytesIO()
-                doc_final.save(buffer)
-                buffer.seek(0)
-                
-                st.markdown("---")
-                st.write("### 🎉 Tudo pronto!")
-                
-                st.download_button(
-                    label="📥 Baixar Escala Formatada (.docx)",
-                    data=buffer,
-                    file_name=f"Escala_Unificada_{meta_mes}_{meta_ano}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+        doc = gerar_docx_completo(dfs['ENFERMEIROS'], dfs['TÉCNICOS'], meta_ano, meta_mes)
+        
+        bio = io.BytesIO()
+        doc.save(bio)
+        
+        st.download_button(
+            label="📥 Baixar DOCX",
+            data=bio.getvalue(),
+            file_name=f"Escala_Final_{meta_mes}_{meta_ano}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
