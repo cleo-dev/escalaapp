@@ -1,0 +1,10 @@
+# Requirements para o app.py
+# Bibliotecas principais
+streamlit
+pdfplumber
+pandas
+python-docx
+
+# Observações:
+# - Use um ambiente virtual (venv) para instalar as dependências
+# - Instalação: pip install -r requirements.txt
